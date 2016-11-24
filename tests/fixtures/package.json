@@ -1,0 +1,15 @@
+{
+	"name": "test-package",
+	"version": "1.0.0",
+	"description": "A test package",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/dojo/api-doc.git"
+	},
+	"license": "BSD-3-Clause",
+	"dependencies": {
+		"dojo-has": ">=2.0.0-alpha.6",
+		"dojo-interfaces": ">=2.0.0-alpha.7",
+		"dojo-shim": ">=2.0.0-beta.3"
+	}
+}

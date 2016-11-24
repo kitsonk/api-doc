@@ -1,0 +1,17 @@
+{
+	"compilerOptions": {
+		"declaration": false,
+		"module": "umd",
+		"noImplicitAny": true,
+		"noImplicitThis": true,
+		"strictNullChecks": true,
+		"outDir": "_build/",
+		"removeComments": false,
+		"sourceMap": true,
+		"target": "es6",
+		"moduleResolution": "node"
+	},
+	"include": [
+		"./src/**/*.ts"
+	]
+}

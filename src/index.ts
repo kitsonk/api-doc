@@ -9,7 +9,7 @@ import {
 import convert from './converter/convert';
 import * as glob from 'glob';
 
-glob('../compose/src/**/*.ts', { realpath: true } , (err, files) => {
+glob('./tests/fixtures/src/**/*.ts', { realpath: true } , (err, files) => {
 	if (err) {
 		throw err;
 	}
@@ -25,7 +25,7 @@ glob('../compose/src/**/*.ts', { realpath: true } , (err, files) => {
 		],
 		module: ModuleKind.UMD,
 		moduleResolution: ModuleResolutionKind.NodeJs,
-		project: '../compose',
+		project: './tests/fixtures',
 		target: ScriptTarget.ES5
 	};
 	const host = createCompilerHost(compilerOptions);

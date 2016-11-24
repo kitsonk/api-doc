@@ -61,7 +61,7 @@ module.exports = function (grunt) {
 			options: {
 				configuration: grunt.file.readJSON('tslint.json')
 			},
-			src: [ '<%= tsconfig.include %>' ]
+			src: [ '<%= tsconfig.include %>', '!<%= tsconfig.exclude %>' ]
 		}
 	});
 

@@ -18,7 +18,9 @@ import {
 	Type,
 	TypeAliasDeclaration,
 	TypeElement,
-	TypeParameter
+	TypeParameter,
+	VariableDeclaration,
+	VariableStatement
 } from 'typescript';
 
 const assign = Object.assign;
@@ -92,13 +94,17 @@ interface TypeDoc {
 	types?: TypeDoc[];
 }
 
+interface VariableDoc extends SymbolDoc {
+	nodeType: 'variable';
+}
+
 interface TypeAliasDoc extends SymbolDoc {
 	type: string;
 	types?: TypeDoc[];
 	nodeType: 'type';
 }
 
-type SyntaxNodeDoc = ClassDoc | EnumDoc | FunctionDoc | ImportDoc | InterfaceDoc | TypeAliasDoc;
+type SyntaxNodeDoc = ClassDoc | EnumDoc | FunctionDoc | ImportDoc | InterfaceDoc | TypeAliasDoc | VariableDoc;
 
 interface ModuleDoc {
 	[sourceFileName: string]: SyntaxNodeDoc[];
@@ -277,6 +283,16 @@ function convert(files: string[], program: Program): { results: ModuleDoc, diagn
 		return details;
 	}
 
+	function serializeVariableDeclaration(node: VariableDeclaration): VariableDoc {
+		return assign(serializeSymbol(checker.getSymbolAtLocation(node.name)), {
+			nodeType: <'variable'> 'variable'
+		});
+	}
+
+	function serializeVariableStatement(node: VariableStatement): VariableDoc[] {
+		return node.declarationList.declarations.map(serializeVariableDeclaration);
+	}
+
 	/**
 	 * Visit a node and if applicable add it to the current module documentation
 	 */
@@ -308,12 +324,15 @@ function convert(files: string[], program: Program): { results: ModuleDoc, diagn
 		case SyntaxKind.TypeAliasDeclaration:
 			output.push(serializeTypeAlias((<TypeAliasDeclaration> node).name));
 			break;
+		case SyntaxKind.VariableStatement:
+			output.push(...serializeVariableStatement(<VariableStatement> node));
+			break;
 		default:
 			throw new Error(`Unpected exported node kind: ${node.kind}`);
 		}
 	}
 
-	const prefixLength = '/Users/kitsonk/github/compose/src/'.length;
+	const prefixLength = '/Users/kitsonk/github/api-doc/tests/fixtures/src/'.length;
 
 	program.getSourceFiles().forEach((sourceFile) => {
 		if (files.indexOf(sourceFile.fileName) > -1) {
