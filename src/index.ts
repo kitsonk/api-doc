@@ -14,8 +14,6 @@ glob('../compose/src/**/*.ts', { realpath: true } , (err, files) => {
 		throw err;
 	}
 
-	console.log(files);
-
 	const compilerOptions: CompilerOptions = {
 		lib: [
 			'lib.dom.d.ts',
@@ -36,5 +34,5 @@ glob('../compose/src/**/*.ts', { realpath: true } , (err, files) => {
 	const results = convert(files, program);
 
 	console.log(JSON.stringify(results.results, undefined, '  '));
-	// console.log(results.diagnostics);
+	console.log(results.diagnostics);
 });

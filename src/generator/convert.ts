@@ -1,19 +1,25 @@
+import * as marked from 'marked';
 import {
-	Node,
-	Diagnostic,
-	Program,
-	NodeFlags,
-	SyntaxKind,
 	ClassDeclaration,
-	Symbol,
+	Diagnostic,
 	displayPartsToString,
-	Signature,
-	forEachChild,
-	InterfaceDeclaration,
 	EnumDeclaration,
+	forEachChild,
+	FunctionDeclaration,
+	Identifier,
+	ImportDeclaration,
+	InterfaceDeclaration,
+	Node,
+	NodeFlags,
+	Program,
+	Signature,
+	Symbol,
+	SyntaxKind,
+	Type,
+	TypeAliasDeclaration,
+	TypeElement,
 	TypeParameter
 } from 'typescript';
-import * as marked from 'marked';
 
 function convert(files: string[], program: Program): { results: any, diagnostics: Diagnostic[] } {
 
@@ -23,7 +29,7 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 	let output: any[] = [];
 
 	function isExportedNode(node: Node): boolean {
-		return Boolean((node.flags & NodeFlags.Export) !== 0 || (node.parent && node.parent.kind === SyntaxKind.SourceFile));
+		return Boolean((node.flags & NodeFlags.Export) !== 0 || (node.flags & NodeFlags.Default) !== 0 || (node.kind === SyntaxKind.ImportDeclaration));
 	}
 
 	function serializeSymbol(symbol: Symbol) {
@@ -64,7 +70,32 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 		const details: any = serializeSymbol(symbol);
 		const constructorType = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration!);
 		details.constructors = constructorType.getConstructSignatures().map(serializeSignature);
+		details.nodeType = 'class';
 		return details;
+	}
+
+	function serializeInterfaceMember(member: TypeElement) {
+		if (member.name) {
+			const symbol: any = serializeSymbol(checker.getSymbolAtLocation(member.name));
+			symbol.nodeType = 'member';
+			return symbol;
+		}
+		if (member.kind === SyntaxKind.CallSignature) {
+			const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
+			signature.nodeType = 'call';
+			return signature;
+		}
+		if (member.kind === SyntaxKind.IndexSignature) {
+			const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
+			signature.nodeType = 'index';
+			return signature;
+		}
+		if (member.kind === SyntaxKind.ConstructSignature) {
+			const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
+			signature.nodeType = 'new';
+			return signature;
+		}
+		throw new Error(`Unexpected member kind: ${member.kind}`);
 	}
 
 	function serializeInterface(node: InterfaceDeclaration) {
@@ -75,30 +106,27 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 				return serializeSymbol(checker.getSymbolAtLocation(typeParameter.name));
 			});
 		}
-		details.members = node.members.map((member) => {
-			if (member.name) {
-				const symbol: any = serializeSymbol(checker.getSymbolAtLocation(member.name));
-				symbol.nodeType = 'member';
-				return symbol;
-			}
-			if (member.kind === SyntaxKind.CallSignature) {
-				const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
-				signature.nodeType = 'call';
-				return signature;
-			}
-			if (member.kind === SyntaxKind.IndexSignature) {
-				const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
-				signature.nodeType = 'index';
-				return signature;
-			}
-			if (member.kind === SyntaxKind.ConstructSignature) {
-				const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
-				signature.nodeType = 'new';
-				return signature;
-			}
-			throw new Error(`Unexpected member kind: ${member.kind}`);
-		});
+		details.members = node.members.map(serializeInterfaceMember);
 		details.nodeType = 'interface';
+		return details;
+	}
+
+	function serializeImport(node: ImportDeclaration) {
+		const details: any = {
+			nodeType: 'import',
+			moduleId: node.moduleSpecifier.getText()
+		};
+		const defaultImportName = node.importClause && node.importClause.name && node.importClause.name.text;
+		if (defaultImportName) {
+			details.default = defaultImportName;
+		}
+		const elements: Node[] | undefined = node.importClause && node.importClause.namedBindings && (<any> node.importClause.namedBindings).elements;
+
+		if (elements) {
+			details.named = elements.map((element: any) => {
+				return element.name.text;
+			});
+		}
 		return details;
 	}
 
@@ -106,6 +134,50 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 		const details: any = serializeSymbol(symbol);
 		const enumType = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration!);
 		details.properties = enumType.getProperties().map(serializeProperty);
+		details.nodeType = 'enum';
+		return details;
+	}
+
+	function serializeFunction(symbol: Symbol) {
+		const details: any = serializeSymbol(symbol);
+		const functionType = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration!);
+		details.signatures = functionType.getCallSignatures().map(serializeSignature);
+		const properties = functionType.getProperties();
+		if (properties.length) {
+			details.properties = properties.map(serializeSymbol);
+		}
+		details.nodeType = 'function';
+		return details;
+	}
+
+	function serializeType(type: Type) {
+		const details: any = {
+			type: checker.typeToString(type)
+		};
+		const members: { [key: string]: any } | undefined = (<any> type).members;
+		if (members) {
+			details.members = [];
+			for (const key in members) {
+				details.members.push(serializeInterfaceMember(members[key].valueDeclaration));
+			}
+		}
+		const types: Type[] | undefined = (<any> type).types;
+		if (types) {
+			details.types = types.map(serializeType);
+		}
+		return details;
+	}
+
+	function serializeTypeAlias(node: Identifier) {
+		const symbol = checker.getSymbolAtLocation(node);
+		const details: any = serializeSymbol(symbol);
+		const typeAtLocation = checker.getTypeAtLocation(node);
+		details.type = checker.typeToString(typeAtLocation);
+		const types: Type[] | undefined = (<any> typeAtLocation).types;
+		if (types) {
+			details.types = types.map(serializeType);
+		}
+		details.nodeType = 'type';
 		return details;
 	}
 
@@ -120,15 +192,25 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 			symbol = checker.getSymbolAtLocation((<ClassDeclaration> node).name!);
 			output.push(serializeClass(symbol));
 			break;
-		case SyntaxKind.InterfaceDeclaration:
-			output.push(serializeInterface(<InterfaceDeclaration> node));
-			break;
 		case SyntaxKind.EnumDeclaration:
 			symbol = checker.getSymbolAtLocation((<EnumDeclaration> node).name!);
 			output.push(serializeEnum(symbol));
 			break;
+		case SyntaxKind.FunctionDeclaration:
+			symbol = checker.getSymbolAtLocation((<FunctionDeclaration> node).name!);
+			output.push(serializeFunction(symbol));
+			break;
+		case SyntaxKind.ImportDeclaration:
+			output.push(serializeImport(<ImportDeclaration> node));
+			break;
+		case SyntaxKind.InterfaceDeclaration:
+			output.push(serializeInterface(<InterfaceDeclaration> node));
+			break;
+		case SyntaxKind.TypeAliasDeclaration:
+			output.push(serializeTypeAlias((<TypeAliasDeclaration> node).name));
+			break;
 		default:
-			console.log('Export Node Kind: ', node.kind);
+			throw new Error(`Unpected exported node kind: ${node.kind}`);
 		}
 	}
 
