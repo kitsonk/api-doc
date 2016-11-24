@@ -4,7 +4,7 @@
   "description": "API Document Generator for Dojo 2",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "grunt test"
   },
   "repository": {
     "type": "git",
@@ -31,10 +31,13 @@
     "@types/grunt": "^0.4.20",
     "@types/marked": "0.0.28",
     "@types/node": "^6.0.48",
+    "dojo-loader": ">=2.0.0-beta.7",
     "grunt": "^1.0.1",
+    "grunt-contrib-clean": "1.0.0",
     "grunt-ts": "^6.0.0-beta.3",
     "grunt-tslint": "^3.3.0",
     "intern": "^3.4.1",
+    "remap-istanbul": "^0.7.0",
     "tslint": "^3.15.0",
     "typescript": "^2.0.10"
   }
