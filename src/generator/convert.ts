@@ -21,19 +21,109 @@ import {
 	TypeParameter
 } from 'typescript';
 
-function convert(files: string[], program: Program): { results: any, diagnostics: Diagnostic[] } {
+const assign = Object.assign;
+
+interface PropertyDoc {
+	name: string;
+	documentation: string;
+}
+
+interface SymbolDoc extends PropertyDoc {
+	type?: string;
+}
+
+interface SignatureDoc {
+	parameters: SymbolDoc[];
+	returnType: string;
+	documentation: string;
+	typeParameters?: SymbolDoc[];
+}
+
+interface CallSignatureDoc extends SignatureDoc {
+	nodeType: 'call';
+}
+
+interface IndexSignatureDoc extends SignatureDoc {
+	nodeType: 'index';
+}
+
+interface ConstructSignatureDoc extends SignatureDoc {
+	nodeType: 'new';
+}
+
+interface MemberDoc extends SymbolDoc {
+	nodeType: 'member';
+}
+
+type InterfaceMemberDoc = MemberDoc | CallSignatureDoc | IndexSignatureDoc | ConstructSignatureDoc;
+
+interface InterfaceDoc extends SymbolDoc {
+	nodeType: 'interface';
+	members: InterfaceMemberDoc[];
+	typeParameters?: SymbolDoc[];
+}
+
+interface ClassDoc extends SymbolDoc {
+	nodeType: 'class';
+	constructors: SignatureDoc[];
+}
+
+interface ImportDoc {
+	nodeType: 'import';
+	moduleId: string;
+	default?: string;
+	named?: string[];
+}
+
+interface EnumDoc extends SymbolDoc {
+	nodeType: 'enum';
+	properties: PropertyDoc[];
+}
+
+interface FunctionDoc extends SymbolDoc {
+	nodeType: 'function';
+	signatures: SignatureDoc[];
+	properties?: SymbolDoc[];
+}
+
+interface TypeDoc {
+	type: string;
+	members?: InterfaceMemberDoc[];
+	types?: TypeDoc[];
+}
+
+interface TypeAliasDoc extends SymbolDoc {
+	type: string;
+	types?: TypeDoc[];
+	nodeType: 'type';
+}
+
+type SyntaxNodeDoc = ClassDoc | EnumDoc | FunctionDoc | ImportDoc | InterfaceDoc | TypeAliasDoc;
+
+interface ModuleDoc {
+	[sourceFileName: string]: SyntaxNodeDoc[];
+}
+
+/**
+ * Convert a list of files and a TypeScript program into a set of ModuleDoc, including any diagnostics returned
+ * when compiling the program
+ *
+ * @param files An array of strings which represent the files to be documented out of the program
+ * @param A TypeScript program instance
+ */
+function convert(files: string[], program: Program): { results: ModuleDoc, diagnostics: Diagnostic[] } {
 
 	const checker = program.getTypeChecker();
 
-	const results: { [filename: string]: any[] } = {};
-	let output: any[] = [];
+	const results: ModuleDoc = {};
+	let output: SyntaxNodeDoc[] = [];
 
 	function isExportedNode(node: Node): boolean {
 		return Boolean((node.flags & NodeFlags.Export) !== 0 || (node.flags & NodeFlags.Default) !== 0 || (node.kind === SyntaxKind.ImportDeclaration));
 	}
 
-	function serializeSymbol(symbol: Symbol) {
-		const details: any = {
+	function serializeSymbol(symbol: Symbol): SymbolDoc {
+		const details: SymbolDoc = {
 			name: symbol.getName(),
 			documentation: marked(displayPartsToString(symbol.getDocumentationComment()))
 		};
@@ -43,12 +133,12 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 		return details;
 	}
 
-	function serializeTypeParameter(typeParameter: TypeParameter) {
+	function serializeTypeParameter(typeParameter: TypeParameter): SymbolDoc {
 		return serializeSymbol(typeParameter.symbol!);
 	}
 
-	function serializeSignature(signature: Signature) {
-		const details: any = {
+	function serializeSignature(signature: Signature): SignatureDoc {
+		const details: SignatureDoc = {
 			parameters: signature.parameters.map(serializeSymbol),
 			returnType: checker.typeToString(signature.getReturnType()),
 			documentation: marked(displayPartsToString(signature.getDocumentationComment()))
@@ -59,60 +149,63 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 		return details;
 	}
 
-	function serializeProperty(symbol: Symbol) {
+	function serializeProperty(symbol: Symbol): PropertyDoc {
 		return {
 			name: symbol.getName(),
 			documentation: displayPartsToString(symbol.getDocumentationComment())
 		};
 	}
 
-	function serializeClass(symbol: Symbol) {
-		const details: any = serializeSymbol(symbol);
+	function serializeClass(symbol: Symbol): ClassDoc {
 		const constructorType = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration!);
-		details.constructors = constructorType.getConstructSignatures().map(serializeSignature);
-		details.nodeType = 'class';
+		const details = assign(serializeSymbol(symbol), {
+			constructors: constructorType.getConstructSignatures().map(serializeSignature),
+			nodeType: <'class'> 'class'
+		});
 		return details;
 	}
 
-	function serializeInterfaceMember(member: TypeElement) {
+	function serializeInterfaceMember(member: TypeElement): InterfaceMemberDoc {
 		if (member.name) {
 			const symbol: any = serializeSymbol(checker.getSymbolAtLocation(member.name));
 			symbol.nodeType = 'member';
 			return symbol;
 		}
 		if (member.kind === SyntaxKind.CallSignature) {
-			const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
-			signature.nodeType = 'call';
+			const signature = assign(serializeSignature(checker.getSignatureFromDeclaration(<any> member)), {
+				nodeType: <'call'> 'call'
+			});
 			return signature;
 		}
 		if (member.kind === SyntaxKind.IndexSignature) {
-			const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
-			signature.nodeType = 'index';
+			const signature = assign(serializeSignature(checker.getSignatureFromDeclaration(<any> member)), {
+				nodeType: <'index'> 'index'
+			});
 			return signature;
 		}
 		if (member.kind === SyntaxKind.ConstructSignature) {
-			const signature: any = serializeSignature(checker.getSignatureFromDeclaration(<any> member));
-			signature.nodeType = 'new';
+			const signature = assign(serializeSignature(checker.getSignatureFromDeclaration(<any> member)), {
+				nodeType: <'new'> 'new'
+			});
 			return signature;
 		}
 		throw new Error(`Unexpected member kind: ${member.kind}`);
 	}
 
-	function serializeInterface(node: InterfaceDeclaration) {
+	function serializeInterface(node: InterfaceDeclaration): InterfaceDoc {
 		const symbol = checker.getSymbolAtLocation(node.name!);
-		const details: any = serializeSymbol(symbol);
+		const details: InterfaceDoc = assign(serializeSymbol(symbol), {
+			members: node.members.map(serializeInterfaceMember),
+			nodeType: <'interface'> 'interface'
+		});
 		if (node.typeParameters) {
-			details.typeParameters = node.typeParameters.map((typeParameter) => {
-				return serializeSymbol(checker.getSymbolAtLocation(typeParameter.name));
-			});
+			details.typeParameters = node.typeParameters.map((typeParameter) => serializeSymbol(checker.getSymbolAtLocation(typeParameter.name)));
 		}
-		details.members = node.members.map(serializeInterfaceMember);
-		details.nodeType = 'interface';
 		return details;
 	}
 
-	function serializeImport(node: ImportDeclaration) {
-		const details: any = {
+	function serializeImport(node: ImportDeclaration): ImportDoc {
+		const details: ImportDoc = {
 			nodeType: 'import',
 			moduleId: node.moduleSpecifier.getText()
 		};
@@ -130,28 +223,30 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 		return details;
 	}
 
-	function serializeEnum(symbol: Symbol) {
-		const details: any = serializeSymbol(symbol);
+	function serializeEnum(symbol: Symbol): EnumDoc {
 		const enumType = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration!);
-		details.properties = enumType.getProperties().map(serializeProperty);
-		details.nodeType = 'enum';
+		const details = assign(serializeSymbol(symbol), {
+			properties: enumType.getProperties().map(serializeProperty),
+			nodeType: <'enum'> 'enum'
+		});
 		return details;
 	}
 
-	function serializeFunction(symbol: Symbol) {
-		const details: any = serializeSymbol(symbol);
+	function serializeFunction(symbol: Symbol): FunctionDoc {
 		const functionType = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration!);
-		details.signatures = functionType.getCallSignatures().map(serializeSignature);
+		const details: FunctionDoc = assign(serializeSymbol(symbol), {
+			signatures: functionType.getCallSignatures().map(serializeSignature),
+			nodeType: <'function'> 'function'
+		});
 		const properties = functionType.getProperties();
 		if (properties.length) {
-			details.properties = properties.map(serializeSymbol);
+			details.properties = properties.map(serializeProperty);
 		}
-		details.nodeType = 'function';
 		return details;
 	}
 
-	function serializeType(type: Type) {
-		const details: any = {
+	function serializeType(type: Type): TypeDoc {
+		const details: TypeDoc = {
 			type: checker.typeToString(type)
 		};
 		const members: { [key: string]: any } | undefined = (<any> type).members;
@@ -168,20 +263,24 @@ function convert(files: string[], program: Program): { results: any, diagnostics
 		return details;
 	}
 
-	function serializeTypeAlias(node: Identifier) {
+	function serializeTypeAlias(node: Identifier): TypeAliasDoc {
 		const symbol = checker.getSymbolAtLocation(node);
-		const details: any = serializeSymbol(symbol);
 		const typeAtLocation = checker.getTypeAtLocation(node);
-		details.type = checker.typeToString(typeAtLocation);
+		const details: TypeAliasDoc = assign(serializeSymbol(symbol), {
+			type: checker.typeToString(typeAtLocation),
+			nodeType: <'type'> 'type'
+		});
 		const types: Type[] | undefined = (<any> typeAtLocation).types;
 		if (types) {
 			details.types = types.map(serializeType);
 		}
-		details.nodeType = 'type';
 		return details;
 	}
 
-	function visit(node: Node) {
+	/**
+	 * Visit a node and if applicable add it to the current module documentation
+	 */
+	function visit(node: Node): void {
 		if (!isExportedNode(node)) {
 			return;
 		}
