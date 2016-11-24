@@ -6,7 +6,7 @@ import {
 	ModuleResolutionKind,
 	ScriptTarget
 } from 'typescript';
-import convert from './generator/convert';
+import convert from './converter/convert';
 import * as glob from 'glob';
 
 glob('../compose/src/**/*.ts', { realpath: true } , (err, files) => {
