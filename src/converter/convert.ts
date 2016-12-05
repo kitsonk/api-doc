@@ -4,6 +4,7 @@ import {
 	Diagnostic,
 	displayPartsToString,
 	EnumDeclaration,
+	ExportAssignment,
 	forEachChild,
 	FunctionDeclaration,
 	Identifier,
@@ -11,6 +12,8 @@ import {
 	InterfaceDeclaration,
 	Node,
 	NodeFlags,
+	ObjectLiteralElement,
+	ObjectLiteralExpression,
 	Program,
 	Signature,
 	Symbol,
@@ -25,56 +28,17 @@ import {
 
 const assign = Object.assign;
 
-interface PropertyDoc {
-	name: string;
-	documentation: string;
-}
-
-interface SymbolDoc extends PropertyDoc {
-	type?: string;
-}
-
-interface SignatureDoc {
-	parameters: SymbolDoc[];
-	returnType: string;
-	documentation: string;
-	typeParameters?: SymbolDoc[];
-}
-
 interface CallSignatureDoc extends SignatureDoc {
 	nodeType: 'call';
-}
-
-interface IndexSignatureDoc extends SignatureDoc {
-	nodeType: 'index';
 }
 
 interface ConstructSignatureDoc extends SignatureDoc {
 	nodeType: 'new';
 }
 
-interface MemberDoc extends SymbolDoc {
-	nodeType: 'member';
-}
-
-type InterfaceMemberDoc = MemberDoc | CallSignatureDoc | IndexSignatureDoc | ConstructSignatureDoc;
-
-interface InterfaceDoc extends SymbolDoc {
-	nodeType: 'interface';
-	members: InterfaceMemberDoc[];
-	typeParameters?: SymbolDoc[];
-}
-
 interface ClassDoc extends SymbolDoc {
 	nodeType: 'class';
 	constructors: SignatureDoc[];
-}
-
-interface ImportDoc {
-	nodeType: 'import';
-	moduleId: string;
-	default?: string;
-	named?: string[];
 }
 
 interface EnumDoc extends SymbolDoc {
@@ -88,6 +52,56 @@ interface FunctionDoc extends SymbolDoc {
 	properties?: SymbolDoc[];
 }
 
+interface ImportDoc {
+	nodeType: 'import';
+	moduleId: string;
+	default?: string;
+	named?: string[];
+}
+
+interface IndexSignatureDoc extends SignatureDoc {
+	nodeType: 'index';
+}
+
+interface InterfaceDoc extends SymbolDoc {
+	nodeType: 'interface';
+	members: InterfaceMemberDoc[];
+	typeParameters?: SymbolDoc[];
+}
+
+type InterfaceMemberDoc = MemberDoc | CallSignatureDoc | IndexSignatureDoc | ConstructSignatureDoc;
+
+interface MemberDoc extends SymbolDoc {
+	nodeType: 'member';
+}
+
+interface ObjectLiteralDoc {
+	nodeType: 'object';
+	properties: SymbolDoc[];
+}
+
+interface PropertyDoc {
+	name: string;
+	documentation: string;
+}
+
+interface SignatureDoc {
+	parameters: SymbolDoc[];
+	returnType: string;
+	documentation: string;
+	typeParameters?: SymbolDoc[];
+}
+
+interface SymbolDoc extends PropertyDoc {
+	type?: string;
+}
+
+interface TypeAliasDoc extends SymbolDoc {
+	type: string;
+	types?: TypeDoc[];
+	nodeType: 'type';
+}
+
 interface TypeDoc {
 	type: string;
 	members?: InterfaceMemberDoc[];
@@ -98,13 +112,7 @@ interface VariableDoc extends SymbolDoc {
 	nodeType: 'variable';
 }
 
-interface TypeAliasDoc extends SymbolDoc {
-	type: string;
-	types?: TypeDoc[];
-	nodeType: 'type';
-}
-
-type SyntaxNodeDoc = ClassDoc | EnumDoc | FunctionDoc | ImportDoc | InterfaceDoc | TypeAliasDoc | VariableDoc;
+type SyntaxNodeDoc = ClassDoc | EnumDoc | FunctionDoc | ImportDoc | InterfaceDoc | ObjectLiteralDoc | TypeAliasDoc | VariableDoc;
 
 interface ModuleDoc {
 	[sourceFileName: string]: SyntaxNodeDoc[];
@@ -122,10 +130,12 @@ function convert(files: string[], program: Program): { results: ModuleDoc, diagn
 	const checker = program.getTypeChecker();
 
 	const results: ModuleDoc = {};
-	let output: SyntaxNodeDoc[] = [];
-
 	function isExportedNode(node: Node): boolean {
-		return Boolean((node.flags & NodeFlags.Export) !== 0 || (node.flags & NodeFlags.Default) !== 0 || (node.kind === SyntaxKind.ImportDeclaration));
+		return Boolean(
+			(node.flags & NodeFlags.Export) !== 0 ||
+			node.kind === SyntaxKind.ImportDeclaration ||
+			node.kind === SyntaxKind.ExportAssignment
+		);
 	}
 
 	function serializeSymbol(symbol: Symbol): SymbolDoc {
@@ -293,11 +303,30 @@ function convert(files: string[], program: Program): { results: ModuleDoc, diagn
 		return node.declarationList.declarations.map(serializeVariableDeclaration);
 	}
 
+	function serializeExportAssignment(node: ExportAssignment): any {
+		return {
+			name: 'default',
+			value: serializeNode(node.expression, true),
+			nodeType: 'default'
+		};
+	}
+
+	function serializeObjectProperty(element: ObjectLiteralElement): SymbolDoc {
+		return serializeSymbol((<any> element).symbol);
+	}
+
+	function serializeObjectLiteralExpression(node: ObjectLiteralExpression): ObjectLiteralDoc {
+		return {
+			properties: node.properties.map((property) => serializeObjectProperty(property)),
+			nodeType: <'object'> 'object'
+		};
+	}
+
 	/**
 	 * Visit a node and if applicable add it to the current module documentation
 	 */
-	function visit(node: Node): void {
-		if (!isExportedNode(node)) {
+	function serializeNode(node: Node, exported: boolean = false): SyntaxNodeDoc | SyntaxNodeDoc[] | undefined {
+		if (!isExportedNode(node) && !exported) {
 			return;
 		}
 
@@ -305,28 +334,25 @@ function convert(files: string[], program: Program): { results: ModuleDoc, diagn
 		switch (node.kind) {
 		case SyntaxKind.ClassDeclaration:
 			symbol = checker.getSymbolAtLocation((<ClassDeclaration> node).name!);
-			output.push(serializeClass(symbol));
-			break;
+			return serializeClass(symbol);
 		case SyntaxKind.EnumDeclaration:
 			symbol = checker.getSymbolAtLocation((<EnumDeclaration> node).name!);
-			output.push(serializeEnum(symbol));
-			break;
+			return serializeEnum(symbol);
+		case SyntaxKind.ExportAssignment:
+			return serializeExportAssignment(<ExportAssignment> node);
 		case SyntaxKind.FunctionDeclaration:
 			symbol = checker.getSymbolAtLocation((<FunctionDeclaration> node).name!);
-			output.push(serializeFunction(symbol));
-			break;
+			return serializeFunction(symbol);
 		case SyntaxKind.ImportDeclaration:
-			output.push(serializeImport(<ImportDeclaration> node));
-			break;
+			return serializeImport(<ImportDeclaration> node);
 		case SyntaxKind.InterfaceDeclaration:
-			output.push(serializeInterface(<InterfaceDeclaration> node));
-			break;
+			return serializeInterface(<InterfaceDeclaration> node);
+		case SyntaxKind.ObjectLiteralExpression:
+			return serializeObjectLiteralExpression(<ObjectLiteralExpression> node);
 		case SyntaxKind.TypeAliasDeclaration:
-			output.push(serializeTypeAlias((<TypeAliasDeclaration> node).name));
-			break;
+			return serializeTypeAlias((<TypeAliasDeclaration> node).name);
 		case SyntaxKind.VariableStatement:
-			output.push(...serializeVariableStatement(<VariableStatement> node));
-			break;
+			return serializeVariableStatement(<VariableStatement> node);
 		default:
 			throw new Error(`Unpected exported node kind: ${node.kind}`);
 		}
@@ -336,8 +362,13 @@ function convert(files: string[], program: Program): { results: ModuleDoc, diagn
 
 	program.getSourceFiles().forEach((sourceFile) => {
 		if (files.indexOf(sourceFile.fileName) > -1) {
-			results[sourceFile.fileName.slice(prefixLength)] = output = [];
-			forEachChild(sourceFile, visit);
+			const output: SyntaxNodeDoc[] = results[sourceFile.fileName.slice(prefixLength)] = [];
+			forEachChild(sourceFile, (node) => {
+				const doc = serializeNode(node);
+				if (doc) {
+					Array.isArray(doc) ? doc.forEach((item) => output.push(item)) : output.push(doc);
+				}
+			});
 		}
 	});
 
